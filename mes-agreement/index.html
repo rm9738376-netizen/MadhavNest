@@ -52,7 +52,7 @@ b.innerHTML=`<h2>Seller Enrollment</h2><p class="muted">Complete your details to
 document.getElementById('reg').onsubmit=register;
 }
 window.closeModal=()=>document.getElementById('modal').classList.remove('show');
-async function register(e){e.preventDefault();const seller=Object.fromEntries(new FormData(e.target).entries());const msg=document.getElementById('msg');msg.innerHTML='<div class="notice">Saving registration…</div>';const {data,error}=await supabase.functions.invoke('mes-public',{body:{action:'enroll',...seller}});if(error){msg.innerHTML='<div class="notice">'+esc(error.message||'Registration failed')+'</div>';return}enrollment=data.enrollment;showAgreement();}
+async function register(e){e.preventDefault();const seller=Object.fromEntries(new FormData(e.target).entries());seller.gstin=(seller.gstin||'').trim().toUpperCase();const msg=document.getElementById('msg');msg.innerHTML='<div class="notice">Saving registration…</div>';const {data,error}=await supabase.functions.invoke('mes-public',{body:{action:'enroll',...seller}});if(error){let message=error.message||'Registration failed';try{if(error.context){const body=await error.context.json();message=body.error||body.message||message}}catch(_){}msg.innerHTML='<div class="notice">'+esc(message)+'</div>';return}enrollment=data.enrollment;showAgreement();}
 function agreementClauses(){return [
 ['1. Parties & Purpose','This Agreement is between Madhav Ecom Solution ("MES") and the enrolled seller ("Seller") for marketplace growth and support services for the marketplace(s) selected during enrollment.'],
 ['2. Term','This Agreement remains in effect for 12 months from the signing date, unless ended earlier in accordance with these terms.'],
