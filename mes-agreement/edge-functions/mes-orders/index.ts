@@ -25,9 +25,11 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  if(req.method!=='POST')return reply({error:'Method not allowed'},405)
  const b=await req.json().catch(()=>null)
  if(!b||!['Flipkart','Meesho'].includes(b.marketplace)||!['delivered','returned','refunded','cancelled','rto'].includes(b.status)||typeof b.orderId!=='string'||!b.orderId.trim()||!b.sellerId)return reply({error:'Invalid order details'},400)
+ if(['delivered','returned','refunded'].includes(b.status)){
  const {data:terms,error:termError}=await db.from('seller_commission_terms').select('id,effective_from,accepted_at,model,rate').eq('seller_id',b.sellerId).eq('model','delivered_order_flat').not('accepted_at','is',null).lte('effective_from',new Date().toISOString()).order('effective_from',{ascending:false}).limit(1)
  if(termError)return reply({error:termError.message},500)
  if(!terms?.length)return reply({error:'Seller has not accepted the ₹10 agreement; old agreement remains active'},409)
+ }
  if(!['delivered','returned','refunded','cancelled','rto'].includes(b.status))return reply({error:'Invalid status'},400)
  const {data,error}=await db.rpc('mes_record_order',{
   p_seller_id:b.sellerId,p_marketplace:b.marketplace,p_order_id:b.orderId.trim(),p_status:b.status,
