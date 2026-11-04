@@ -77,6 +77,10 @@ create or replace function public.mes_record_order(
 declare v_order public.seller_orders%rowtype;v_policy public.seller_commission_terms%rowtype;
  v_charged boolean;v_reversed boolean;v_now timestamptz:=now();
 begin
+ -- Defense in depth: the RPC itself requires a registered MES admin actor,
+ -- even when invoked through a service-role backend.
+ if not exists(select 1 from public.admin_users where auth_user_id=p_actor)
+ then raise exception 'MES admin actor required';end if;
  if p_marketplace not in ('Flipkart','Meesho') or p_status not in ('delivered','returned','refunded','cancelled','rto')
  or nullif(trim(p_order_id),'') is null or p_actor is null then raise exception 'Invalid order input';end if;
  -- Cancellation and undelivered RTO are recorded at zero fee, even if no flat-rate
