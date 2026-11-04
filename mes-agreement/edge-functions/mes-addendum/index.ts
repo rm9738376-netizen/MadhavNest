@@ -22,6 +22,9 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  if(b?.action!=='accept_addendum'||b?.version!=='2.0'||b?.accepted!==true||typeof b.signerName!=='string'||!b.signerName.trim())
  return respond({error:'Explicit v2.0 acceptance and signer name required'},400)
  if(b.signerName.length>200)return respond({error:'Signer name too long'},400)
+ // StandardFonts.Helvetica cannot encode Unicode signer names. Reject before recording acceptance
+ // until a Unicode-capable PDF font is embedded, avoiding accepted-but-unarchivable addenda.
+ if(!/^[\x20-\x7E]+$/.test(b.signerName.trim()))return respond({error:'This signing form currently supports Latin-script names only. Contact MES for assisted signing in your preferred script.'},422)
  if(b.termsSha256!==await hashTerms())return respond({error:'Agreement text changed; review again before signing'},409)
  const {data,error}=await ctx.supabaseAdmin.rpc('mes_accept_addendum',{p_actor:user.id,p_terms:ADDENDUM_V2,p_signer:b.signerName.trim()})
  if(error)return respond({error:error.message},409)
@@ -37,7 +40,8 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
    'Terms SHA-256: '+await hashTerms(),'',
    ...ADDENDUM_V2.split('\n').flatMap(line=>{
     const words=line.split(/\s+/),out=[];let current=''
-    for(const word of words){if((current+' '+word).length>95){out.push(current);current=word}else current+=(current?' ':'')+word}
+    for(const word of words){const candidate=current?current+' '+word:word
+     if(font.widthOfTextAtSize(candidate,9)>519 && current){out.push(current);current=word}else current=candidate}
     if(current)out.push(current);return out
    })]
   let page=pdf.addPage([595,842]),y=800
