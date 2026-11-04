@@ -39,3 +39,17 @@
 | Paid order subsequently returned | Credit reconciled without negative constrained legacy settlement |
 
 **Release status:** NOT DEPLOYED. Do not describe this feature as complete or live until all gates pass.
+
+## Final release gate — 2026-11-04
+
+- [x] Admin approval endpoint verifies actual private PDF bytes against stored SHA-256 before requesting approval (code only; not runtime-tested).
+- [ ] **Blocker:** Signed PDF rendering must preserve the exact Unicode addendum text; current pdf-lib standard font path normalizes unsupported characters. A hash of the rendered PDF does not prove the legal wording matches the text accepted in the browser.
+- [ ] **Blocker:** Confirm that the full signed PDF represents the correct seller identity, terms, acceptance timestamp and immutable evidence; review by legal counsel.
+- [ ] **Blocker:** New-seller v2.0 agreement signing is not implemented. The existing public enrollment function still signs v1.0.
+- [ ] **Blocker:** Run the SQL migration in a disposable staging environment and execute the full staging test matrix; inspect the real schema for column compatibility.
+- [ ] **Blocker:** Verify that Edge Functions compile with the current Supabase runtime and that email OTP is configured.
+- [ ] **Blocker:** Reconcile 5% legacy settlements and ₹10 order-ledger credits without double billing.
+- [ ] **Blocker:** Obtain legal approval and authorized deployment approval; production migration was previously blocked and must not be bypassed.
+- [ ] Deploy only after documented staging pass and rollback rehearsal.
+
+No production launch is authorized by these commits.
