@@ -132,7 +132,7 @@ alter table public.seller_agreement_addenda
  add column if not exists mes_approved_by uuid references auth.users(id);
 create or replace function public.mes_accept_addendum(p_actor uuid,p_terms text,p_signer text)
 returns jsonb language plpgsql security definer set search_path=public,auth as $$
-declare v_email text;v_seller uuid;v_agreement uuid;v_id uuid;v_existing public.seller_agreement_addenda%rowtype;
+declare v_email text;v_seller uuid;v_agreement uuid;v_id uuid;v_accepted_at timestamptz;v_existing public.seller_agreement_addenda%rowtype;
 begin
  select lower(email) into v_email from auth.users
  where id=p_actor and email_confirmed_at is not null;
@@ -157,13 +157,13 @@ begin
    'status',case when v_existing.mes_approved_at is not null then 'active'
     when v_existing.pdf_key is not null then 'awaiting_mes_approval'
     else 'awaiting_pdf_archive' end,
-   'archived',v_existing.pdf_key is not null);
+   'archived',v_existing.pdf_key is not null,'accepted_at',v_existing.accepted_at);
  end if;
  insert into public.seller_agreement_addenda
  (seller_id,original_agreement_id,version,terms_text,accepted_at,accepted_name,seller_auth_user_id)
  values(v_seller,v_agreement,'2.0',p_terms,now(),trim(p_signer),p_actor)
- returning id into v_id;
- return jsonb_build_object('addendum_id',v_id,'status','awaiting_mes_approval');
+ returning id,accepted_at into v_id,v_accepted_at;
+ return jsonb_build_object('addendum_id',v_id,'status','awaiting_mes_approval','accepted_at',v_accepted_at);
 end $$;
 revoke all on function public.mes_accept_addendum(uuid,text,text) from public,anon,authenticated;
 grant execute on function public.mes_accept_addendum(uuid,text,text) to service_role;
