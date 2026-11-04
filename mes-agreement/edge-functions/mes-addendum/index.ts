@@ -5,7 +5,7 @@ const cors={'Content-Type':'application/json','Access-Control-Allow-Origin':'*',
 const respond=(value:any,status=200)=>Response.json(value,{status,headers:cors})
 // Exact terms are controlled by the server, never supplied by the browser.
 // MES countersignature and archival PDF generation must be completed before billing activation.
-const ADDENDUM_V2=`Madhav Ecom Solution — Commission Addendum v2.0.
+const ADDENDUM_V2=`Madhav Ecom Solution - Commission Addendum v2.0.
 This addendum modifies the signed seller agreement only from the effective date mutually accepted by the Seller and Madhav Ecom Solution. The original 12-month term and expiry date remain unchanged. Existing 5% of Net Sales obligations earned before the effective date remain due under the original agreement.
 From the accepted effective date, the service fee is INR 10 for each unique marketplace order successfully delivered to the buyer. This fee is per marketplace order ID, not per item or shipment. A fully returned or fully refunded delivered order receives one INR 10 reversal. Cancelled-before-delivery and RTO orders that were not delivered have no fee. Partial returns do not reverse the fee when some part of the order remains fulfilled. Replacement or exchange fulfillment does not cause a second fee for the same original order. MES and Seller will reconcile marketplace records, refunds and any carried-forward credits.
 All other terms of the original agreement remain unchanged. This addendum requires separate Seller acceptance and MES approval before becoming effective.`
@@ -30,11 +30,12 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  try{
   const pdf=await PDFDocument.create()
   const font=await pdf.embedFont(StandardFonts.Helvetica)
+  if(!/^[\x20-\x7E\n]*$/.test(ADDENDUM_V2))throw Error('PDF font cannot encode canonical agreement text')
   const lines=['MADHAV ECOM SOLUTION - COMMISSION ADDENDUM v2.0',
    'Seller email: '+user.email,'Signer: '+b.signerName.trim(),
    'Seller auth ID: '+user.id,'Accepted at (UTC): '+new Date().toISOString(),
    'Terms SHA-256: '+await hashTerms(),'',
-   ...ADDENDUM_V2.replace(/[^\x20-\x7E\n]/g,'-').split('\n').flatMap(line=>{
+   ...ADDENDUM_V2.split('\n').flatMap(line=>{
     const words=line.split(/\s+/),out=[];let current=''
     for(const word of words){if((current+' '+word).length>95){out.push(current);current=word}else current+=(current?' ':'')+word}
     if(current)out.push(current);return out
