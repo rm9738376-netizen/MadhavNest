@@ -25,6 +25,13 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  if(req.method!=='POST')return reply({error:'Method not allowed'},405)
  const b=await req.json().catch(()=>null)
  if(!b||!['Flipkart','Meesho'].includes(b.marketplace)||!['delivered','returned','refunded','cancelled','rto'].includes(b.status)||typeof b.orderId!=='string'||!b.orderId.trim()||!b.sellerId)return reply({error:'Invalid order details'},400)
+ // Reject oversized identifiers and notes before privileged database work.
+ // Marketplace order IDs are external inputs; do not allow unbounded storage.
+ if(b.orderId.trim().length>128||typeof b.sellerId!=='string'||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(b.sellerId))
+  return reply({error:'Invalid seller ID or order ID length'},400)
+ if(b.notes!==undefined&&(typeof b.notes!=='string'||b.notes.length>2000))
+  return reply({error:'Notes must be text of at most 2000 characters'},400)
  // Validate event timestamps before attempting the privileged database RPC.
  const hasDelivery=['delivered','returned','refunded'].includes(b.status)
  const hasReturn=['returned','refunded'].includes(b.status)
