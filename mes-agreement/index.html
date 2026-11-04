@@ -33,9 +33,45 @@ const app=document.getElementById('app');
 let enrollment=null, adminRows=[], adminUser=null;
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function showSellerAddendum(){
+ const modal=document.getElementById('modal'),box=document.getElementById('modalbox');
+ modal.classList.add('show');
+ box.innerHTML='<h2>Existing Seller — Commission Addendum</h2><p class="muted">Your original 12-month agreement remains unchanged. The new ₹10-per-delivered-order model will only start after verified acceptance and MES approval. Existing 5% liabilities remain payable.</p><div class="notice">This workflow is under development. Do not treat an OTP or submission as an executed addendum until MES confirms activation.</div><form id="sellerOtpRequest"><div class="field"><label>Registered email</label><input id="sellerEmail" type="email" autocomplete="email" required></div><button class="btn primary">Send email OTP</button></form><form id="sellerOtpVerify" style="display:none"><div class="field"><label>One-time code</label><input id="sellerOtp" inputmode="numeric" autocomplete="one-time-code" required></div><button class="btn primary">Verify email</button></form><form id="sellerAcceptForm" style="display:none"><div class="field"><label>Authorized signatory</label><input id="sellerSigner" required maxlength="200"></div><label><input type="checkbox" id="sellerAccept" required> I have reviewed and explicitly accept Commission Addendum v2.0, subject to MES approval.</label><div class="actions"><button class="btn primary">Submit acceptance</button></div></form><div id="sellerAddendumMsg" role="status" aria-live="polite"></div>';
+ const msg=document.getElementById('sellerAddendumMsg');
+ let verified=false;
+ document.getElementById('sellerOtpRequest').onsubmit=async e=>{
+  e.preventDefault();const email=document.getElementById('sellerEmail').value.trim().toLowerCase();
+  msg.textContent='Requesting OTP…';
+  const {error}=await supabase.auth.signInWithOtp({email,options:{shouldCreateUser:false}});
+  if(error){msg.textContent=error.message;return}
+  msg.textContent='If this email has an eligible account, check your inbox for a code.';
+  document.getElementById('sellerOtpVerify').style.display='block';
+ };
+ document.getElementById('sellerOtpVerify').onsubmit=async e=>{
+  e.preventDefault();
+  const email=document.getElementById('sellerEmail').value.trim().toLowerCase();
+  const token=document.getElementById('sellerOtp').value.trim();
+  const {data,error}=await supabase.auth.verifyOtp({email,token,type:'email'});
+  if(error||!data?.session){msg.textContent=error?.message||'Verification failed';return}
+  verified=true;msg.textContent='Email verified. Review the complete v2.0 addendum before accepting.';
+  document.getElementById('sellerAcceptForm').style.display='block';
+ };
+ document.getElementById('sellerAcceptForm').onsubmit=async e=>{
+  e.preventDefault();if(!verified||!document.getElementById('sellerAccept').checked)return;
+  const {data:{session}}=await supabase.auth.getSession();
+  if(!session){msg.textContent='Session expired. Verify again.';return}
+  msg.textContent='Submitting acceptance…';
+  try{
+   const res=await fetch(SUPABASE_URL+'/functions/v1/mes-addendum',{method:'POST',headers:{apikey:SUPABASE_KEY,authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},body:JSON.stringify({action:'accept_addendum',version:'2.0',accepted:true,signerName:document.getElementById('sellerSigner').value.trim()})});
+   const result=await res.json().catch(()=>({}));
+   if(!res.ok)throw Error(result.error||'Acceptance unavailable');
+   msg.textContent='Acceptance recorded. Awaiting MES approval; original 5% terms remain active until confirmed.';
+  }catch(error){msg.textContent=error.message}
+ };
+}
 function shell(){
 app.innerHTML=`<div class="top"><span>Marketplace Growth Partner for Indian Sellers</span><span>7984185596 &nbsp;•&nbsp; info@madhavecomsolution.com</span></div>
-<nav class="nav"><a class="brand" href="#"><span class="logo">MES</span>Madhav Ecom Solution</a><div class="links"><a href="#services">Services</a><a href="#method">How We Work</a><a href="#contact">Contact</a></div><div class="navActions"><button class="btn outline" id="adminBtn">Admin</button><button class="btn primary" id="navEnroll">Seller Registration</button></div></nav>
+<nav class="nav"><a class="brand" href="#"><span class="logo">MES</span>Madhav Ecom Solution</a><div class="links"><a href="#services">Services</a><a href="#method">How We Work</a><a href="#contact">Contact</a></div><div class="navActions"><button class="btn outline" id="sellerAddendumBtn">Existing Seller</button><button class="btn outline" id="adminBtn">Admin</button><button class="btn primary" id="navEnroll">Seller Registration</button></div></nav>
 <header class="hero"><div><div class="eyebrow">Meesho + Flipkart Growth Partner</div><h1>Build a stronger <span>marketplace business.</span></h1><p>Professional marketplace management for sellers who want better catalogs, stronger visibility and disciplined growth on Meesho and Flipkart.</p><div class="heroBtns"><button class="btn primary" id="startBtn">Register as a Seller →</button><a class="btn ghost" href="#services">Explore Services</a></div><div class="trust"><span>12-Month Partnership</span><span>Transparent 5% Model</span><span>No Fixed Monthly Fee</span></div></div>
 <div class="card"><div class="cardLabel">Simple & transparent commercial model</div><div class="rate">5% <small>of Net Sales</small></div><p class="muted">Our fee grows only when your net marketplace sales grow.</p><div class="commercial"><div class="mini"><strong>₹0</strong><span>Fixed Monthly Fee</span></div><div class="mini"><strong>₹0</strong><span>Minimum Fee</span></div><div class="mini"><strong>12 Months</strong><span>Agreement Term</span></div><div class="mini"><strong>2 Platforms</strong><span>Meesho + Flipkart</span></div></div><button class="btn primary" id="enrollBtn">Start Seller Registration</button></div></header>
 <section id="services"><div class="sectionHead"><div class="kicker">Our Services</div><h2>Everything your marketplace business needs to grow.</h2><p class="muted">Structured support across catalog quality, visibility, operations and performance.</p></div><div class="grid"><div class="feature"><div class="icon">01</div><h3>Listing & Catalog SEO</h3><p>Marketplace-ready titles, attributes, keywords, content and catalog improvements designed for discoverability.</p></div><div class="feature"><div class="icon">02</div><h3>Growth Management</h3><p>Pricing support, campaign execution, catalog improvement and marketplace actions focused on sustainable growth.</p></div><div class="feature"><div class="icon">03</div><h3>Seller Operations</h3><p>Performance tracking, order insights, returns and RTO review, settlement visibility and structured reporting.</p></div></div></section>
@@ -154,5 +190,6 @@ supabase.auth.onAuthStateChange((event,session)=>{
 });
 
 shell();
+document.getElementById('sellerAddendumBtn').onclick=showSellerAddendum;
 </script>
 </body></html>
