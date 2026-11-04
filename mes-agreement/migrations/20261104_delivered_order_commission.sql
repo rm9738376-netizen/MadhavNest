@@ -79,17 +79,24 @@ declare v_order public.seller_orders%rowtype;v_policy public.seller_commission_t
 begin
  if p_marketplace not in ('Flipkart','Meesho') or p_status not in ('delivered','returned','refunded','cancelled','rto')
  or nullif(trim(p_order_id),'') is null or p_actor is null then raise exception 'Invalid order input';end if;
- select * into v_policy from public.seller_commission_terms
- where seller_id=p_seller_id and model='delivered_order_flat' and accepted_at is not null
- and effective_from<=coalesce(p_delivered_at,v_now)
- order by effective_from desc limit 1;
- if not found then raise exception 'Accepted ₹10 commission policy not effective for delivery date';end if;
+ -- Cancellation and undelivered RTO are recorded at zero fee, even if no flat-rate
+ -- policy existed at the event time. Delivered events require the approved policy.
+ if p_status in ('delivered','returned','refunded') then
+  select * into v_policy from public.seller_commission_terms
+  where seller_id=p_seller_id and model='delivered_order_flat' and accepted_at is not null
+  and effective_from<=p_delivered_at
+  order by effective_from desc limit 1;
+  if not found then raise exception 'Accepted ₹10 commission policy not effective for delivery date';end if;
+ end if;
  if p_status in ('delivered','returned','refunded') and p_delivered_at is null then raise exception 'Delivery date required';end if;
  if p_status in ('returned','refunded') and p_returned_at is null then raise exception 'Return date required';end if;
  if p_delivered_at is not null and p_delivered_at < v_policy.effective_from then raise exception 'Delivery predates accepted policy';end if;
  if p_delivered_at > v_now or p_returned_at > v_now then raise exception 'Future event date invalid';end if;
  if p_status in ('cancelled','rto') and (p_delivered_at is not null or p_returned_at is not null)
  then raise exception 'Cancelled or RTO orders must not include delivery or return dates';end if;
+ -- 'returned' and 'refunded' mean a COMPLETE return/refund, not a partial one.
+ -- Partial returns must remain 'delivered' so the original INR 10 fee is retained.
+ -- Never post a reversal for partial fulfillment.
  if p_status='delivered' and p_returned_at is not null
  then raise exception 'Delivered orders cannot include a return date';end if;
  if p_returned_at is not null and p_delivered_at is not null and p_returned_at < p_delivered_at then raise exception 'Return before delivery';end if;
