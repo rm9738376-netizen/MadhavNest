@@ -59,3 +59,48 @@ alter table public.seller_orders enable row level security;
 alter table public.order_commission_ledger enable row level security;
 alter table public.seller_agreement_addenda enable row level security;
 -- No client RLS policies: only privileged, server-side admin functions may write.
+
+-- Transactional manual-order posting; callable only by service_role.
+-- The admin Edge Function must verify admin_users before invoking this RPC.
+create or replace function public.mes_record_order(
+ p_seller_id uuid,p_marketplace text,p_order_id text,p_status text,
+ p_delivered_at timestamptz,p_returned_at timestamptz,p_actor uuid,p_notes text default ''
+) returns jsonb language plpgsql security invoker set search_path=public as $$
+declare v_order public.seller_orders%rowtype;v_policy public.seller_commission_terms%rowtype;
+ v_charged boolean;v_reversed boolean;v_now timestamptz:=now();
+begin
+ if p_marketplace not in ('Flipkart','Meesho') or p_status not in ('delivered','returned','refunded','cancelled','rto')
+ or nullif(trim(p_order_id),'') is null or p_actor is null then raise exception 'Invalid order input';end if;
+ select * into v_policy from public.seller_commission_terms
+ where seller_id=p_seller_id and model='delivered_order_flat' and accepted_at is not null
+ and effective_from<=coalesce(p_delivered_at,v_now)
+ order by effective_from desc limit 1;
+ if not found then raise exception 'Accepted ₹10 commission policy not effective for delivery date';end if;
+ if p_status in ('delivered','returned','refunded') and p_delivered_at is null then raise exception 'Delivery date required';end if;
+ if p_status in ('returned','refunded') and p_returned_at is null then raise exception 'Return date required';end if;
+ if p_delivered_at is not null and p_delivered_at < v_policy.effective_from then raise exception 'Delivery predates accepted policy';end if;
+ if p_delivered_at > v_now or p_returned_at > v_now then raise exception 'Future event date invalid';end if;
+ if p_returned_at is not null and p_delivered_at is not null and p_returned_at < p_delivered_at then raise exception 'Return before delivery';end if;
+ insert into public.seller_orders(seller_id,marketplace,marketplace_order_id,status,delivered_at,returned_at,notes,created_by)
+ values(p_seller_id,p_marketplace,trim(p_order_id),p_status,p_delivered_at,p_returned_at,coalesce(p_notes,''),p_actor)
+ on conflict(seller_id,marketplace,marketplace_order_id) do nothing;
+ select * into v_order from public.seller_orders where seller_id=p_seller_id and marketplace=p_marketplace and marketplace_order_id=trim(p_order_id) for update;
+ select exists(select 1 from public.order_commission_ledger where order_id=v_order.id and event_type='delivery_charge') into v_charged;
+ select exists(select 1 from public.order_commission_ledger where order_id=v_order.id and event_type='return_reversal') into v_reversed;
+ if v_reversed and p_status='delivered' then raise exception 'Reversed order cannot be recharged automatically';end if;
+ if v_charged and p_status in ('cancelled','rto') then raise exception 'Previously delivered order requires return/refund adjustment';end if;
+ if v_order.status in ('returned','refunded') and p_status not in ('returned','refunded') then raise exception 'Cannot undo return without reviewed correction';end if;
+ if v_charged and v_order.delivered_at is distinct from p_delivered_at then raise exception 'Delivery date locked after charging';end if;
+ if p_status in ('delivered','returned','refunded') then
+  insert into public.order_commission_ledger(order_id,seller_id,event_type,amount,event_at,created_by)
+  values(v_order.id,p_seller_id,'delivery_charge',10,p_delivered_at,p_actor) on conflict(order_id,event_type) do nothing;
+ end if;
+ if p_status in ('returned','refunded') then
+  insert into public.order_commission_ledger(order_id,seller_id,event_type,amount,event_at,created_by)
+  values(v_order.id,p_seller_id,'return_reversal',-10,p_returned_at,p_actor) on conflict(order_id,event_type) do nothing;
+ end if;
+ update public.seller_orders set status=p_status,delivered_at=p_delivered_at,returned_at=p_returned_at,notes=coalesce(p_notes,''),updated_at=v_now where id=v_order.id;
+ return jsonb_build_object('order_id',v_order.id,'status',p_status);
+end $$;
+revoke all on function public.mes_record_order(uuid,text,text,text,timestamptz,timestamptz,uuid,text) from public,anon,authenticated;
+grant execute on function public.mes_record_order(uuid,text,text,text,timestamptz,timestamptz,uuid,text) to service_role;
