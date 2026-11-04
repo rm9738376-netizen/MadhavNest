@@ -144,3 +144,36 @@ begin
 end $$;
 revoke all on function public.mes_accept_addendum(uuid,text,text) from public,anon,authenticated;
 grant execute on function public.mes_accept_addendum(uuid,text,text) to service_role;
+
+-- MES countersignature is the sole way to activate the flat-fee policy.
+-- Block approval until the signed document is archived and hashed.
+create or replace function public.mes_approve_addendum(
+ p_addendum_id uuid,p_admin_id uuid
+) returns jsonb language plpgsql security definer set search_path=public as $$
+declare v_addendum public.seller_agreement_addenda%rowtype;v_effective timestamptz:=clock_timestamp();
+begin
+ if not exists(select 1 from public.admin_users where auth_user_id=p_admin_id)
+ then raise exception 'MES admin approval required';end if;
+ select * into v_addendum from public.seller_agreement_addenda
+ where id=p_addendum_id for update;
+ if not found then raise exception 'Addendum not found';end if;
+ if v_addendum.accepted_at is null or v_addendum.seller_auth_user_id is null
+ then raise exception 'Seller has not verified and accepted';end if;
+ if v_addendum.mes_approved_at is not null then raise exception 'Already approved';end if;
+ if nullif(trim(v_addendum.pdf_key),'') is null
+ or v_addendum.pdf_hash !~ '^[0-9a-f]{64}$'
+ then raise exception 'Signed addendum PDF and SHA-256 hash must be archived before approval';end if;
+ if not exists(select 1 from public.seller_agreements
+ where id=v_addendum.original_agreement_id and seller_id=v_addendum.seller_id
+ and terms_status='signed') then raise exception 'Original signed agreement missing';end if;
+ insert into public.seller_commission_terms
+ (seller_id,model,rate,effective_from,accepted_at,accepted_by,agreement_id,addendum_reference)
+ values(v_addendum.seller_id,'delivered_order_flat',10,v_effective,
+ v_addendum.accepted_at,v_addendum.seller_auth_user_id,
+ v_addendum.original_agreement_id,v_addendum.id::text);
+ update public.seller_agreement_addenda set mes_approved_at=v_effective,
+ mes_approved_by=p_admin_id where id=v_addendum.id;
+ return jsonb_build_object('addendum_id',v_addendum.id,'effective_from',v_effective,'status','active');
+end $$;
+revoke all on function public.mes_approve_addendum(uuid,uuid) from public,anon,authenticated;
+grant execute on function public.mes_approve_addendum(uuid,uuid) to service_role;
