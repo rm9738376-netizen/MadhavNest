@@ -35,16 +35,34 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
   const pdf=await PDFDocument.create()
   const font=await pdf.embedFont(StandardFonts.Helvetica)
   if(!/^[\x20-\x7E\n]*$/.test(ADDENDUM_V2))throw Error('PDF font cannot encode canonical agreement text')
-  const lines=['MADHAV ECOM SOLUTION - COMMISSION ADDENDUM v2.0',
+  // Wrap every field (including long email addresses and signer names) by actual
+  // rendered width. Split oversized tokens to keep all evidence inside the page.
+  const maxWidth=519
+  const wrap=(line:string):string[]=>{
+   if(!line)return ['']
+   const result:string[]=[]
+   let current=''
+   for(const word of line.split(/\\s+/)){
+    if(!word)continue
+    const candidate=current?current+' '+word:word
+    if(font.widthOfTextAtSize(candidate,9)<=maxWidth){current=candidate;continue}
+    if(current){result.push(current);current=''}
+    let chunk=''
+    for(const char of word){
+     if(chunk && font.widthOfTextAtSize(chunk+char,9)>maxWidth){result.push(chunk);chunk=''}
+     chunk+=char
+    }
+    current=chunk
+   }
+   if(current)result.push(current)
+   return result
+  }
+  const rawLines=['MADHAV ECOM SOLUTION - COMMISSION ADDENDUM v2.0',
    'Seller email: '+user.email,'Signer: '+b.signerName.trim(),
    'Seller auth ID: '+user.id,'Accepted at (UTC): '+new Date().toISOString(),
    'Terms SHA-256: '+await hashTerms(),'',
-   ...ADDENDUM_V2.split('\n').flatMap(line=>{
-    const words=line.split(/\s+/),out=[];let current=''
-    for(const word of words){const candidate=current?current+' '+word:word
-     if(font.widthOfTextAtSize(candidate,9)>519 && current){out.push(current);current=word}else current=candidate}
-    if(current)out.push(current);return out
-   })]
+   ...ADDENDUM_V2.split('\\n')]
+  const lines=rawLines.flatMap(wrap)
   let page=pdf.addPage([595,842]),y=800
   for(const line of lines){if(y<45){page=pdf.addPage([595,842]);y=800}page.drawText(line,{x:38,y,size:9,font});y-=15}
   const bytes=await pdf.save()
