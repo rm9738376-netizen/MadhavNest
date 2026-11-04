@@ -28,7 +28,11 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  const {data:terms,error:termError}=await db.from('seller_commission_terms').select('id,effective_from,accepted_at,model,rate').eq('seller_id',b.sellerId).eq('model','delivered_order_flat').not('accepted_at','is',null).lte('effective_from',new Date().toISOString()).order('effective_from',{ascending:false}).limit(1)
  if(termError)return reply({error:termError.message},500)
  if(!terms?.length)return reply({error:'Seller has not accepted the ₹10 agreement; old agreement remains active'},409)
- // All order changes and ledger entries must be atomic. Production must use a single
- // authenticated transactional RPC, not independent REST writes that could partially fail.
- return reply({error:'Order writes disabled until transactional database function is deployed and verified'},503)
+ if(!['delivered','returned','refunded','cancelled','rto'].includes(b.status))return reply({error:'Invalid status'},400)
+ const {data,error}=await db.rpc('mes_record_order',{
+  p_seller_id:b.sellerId,p_marketplace:b.marketplace,p_order_id:b.orderId.trim(),p_status:b.status,
+  p_delivered_at:b.deliveredAt||null,p_returned_at:b.returnedAt||null,p_actor:user.id,p_notes:String(b.notes||'')
+ })
+ if(error)return reply({error:error.message},409)
+ return reply({order:data})
 })}
