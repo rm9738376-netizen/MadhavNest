@@ -1,5 +1,6 @@
 // Draft for staging. Requires deployed mes_accept_addendum RPC and configured email OTP.
 import { withSupabase } from 'npm:@supabase/server'
+import { PDFDocument, StandardFonts } from 'npm:pdf-lib@1.17.1'
 const cors={'Content-Type':'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'GET,POST,OPTIONS'}
 const respond=(value:any,status=200)=>Response.json(value,{status,headers:cors})
 // Exact terms are controlled by the server, never supplied by the browser.
@@ -24,5 +25,32 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  if(b.termsSha256!==await hashTerms())return respond({error:'Agreement text changed; review again before signing'},409)
  const {data,error}=await ctx.supabaseAdmin.rpc('mes_accept_addendum',{p_actor:user.id,p_terms:ADDENDUM_V2,p_signer:b.signerName.trim()})
  if(error)return respond({error:error.message},409)
- return respond({addendum:data,version:'2.0',message:'Seller acceptance recorded; awaiting MES approval. Existing 5% terms remain active.'})
+ // Snapshot the exact server-owned terms and authenticated acceptance evidence.
+ // The PDF is not countersigned by MES; approval is a separate action.
+ try{
+  const pdf=await PDFDocument.create()
+  const font=await pdf.embedFont(StandardFonts.Helvetica)
+  const lines=['MADHAV ECOM SOLUTION - COMMISSION ADDENDUM v2.0',
+   'Seller email: '+user.email,'Signer: '+b.signerName.trim(),
+   'Seller auth ID: '+user.id,'Accepted at (UTC): '+new Date().toISOString(),
+   'Terms SHA-256: '+await hashTerms(),'',
+   ...ADDENDUM_V2.replace(/[^\\x20-\\x7E\\n]/g,'-').split('\\n').flatMap(line=>{
+    const words=line.split(/\\s+/),out=[];let current=''
+    for(const word of words){if((current+' '+word).length>95){out.push(current);current=word}else current+=(current?' ':'')+word}
+    if(current)out.push(current);return out
+   })]
+  let page=pdf.addPage([595,842]),y=800
+  for(const line of lines){if(y<45){page=pdf.addPage([595,842]);y=800}page.drawText(line,{x:38,y,size:9,font});y-=15}
+  const bytes=await pdf.save()
+  const digest=await crypto.subtle.digest('SHA-256',bytes)
+  const sha=Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,'0')).join('')
+  const path='addenda/'+data.addendum_id+'.pdf'
+  const {error:uploadError}=await ctx.supabaseAdmin.storage.from('mes-signed-addenda').upload(path,bytes,{contentType:'application/pdf',upsert:false})
+  if(uploadError)throw uploadError
+  const {error:archiveError}=await ctx.supabaseAdmin.rpc('mes_archive_addendum',{p_addendum_id:data.addendum_id,p_actor:user.id,p_pdf_key:path,p_pdf_hash:sha})
+  if(archiveError)throw archiveError
+  return respond({addendum:data,version:'2.0',archived:true,message:'Acceptance and PDF archived; awaiting MES approval.'})
+ }catch(archiveError){
+  return respond({addendum:data,version:'2.0',archived:false,error:'Acceptance recorded, but PDF archival failed. Contact MES; billing remains inactive.'},202)
+ }
 })}
