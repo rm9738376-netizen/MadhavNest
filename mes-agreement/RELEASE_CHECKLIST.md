@@ -43,7 +43,7 @@
 ## Final release gate — 2026-11-04
 
 - [x] Admin approval endpoint verifies actual private PDF bytes against stored SHA-256 before requesting approval (code only; not runtime-tested).
-- [ ] **Blocker:** Signed PDF rendering must preserve the exact Unicode addendum text; current pdf-lib standard font path normalizes unsupported characters. A hash of the rendered PDF does not prove the legal wording matches the text accepted in the browser.
+- [x] Canonical addendum terms now use PDF-compatible ASCII and are rendered without lossy character substitution (code review only; no runtime verification).\n- [ ] **Blocker:** Non-ASCII seller signatory names require an embedded Unicode font and PDF test; current standard-font path can fail archival safely.
 - [ ] **Blocker:** Confirm that the full signed PDF represents the correct seller identity, terms, acceptance timestamp and immutable evidence; review by legal counsel.
 - [ ] **Blocker:** New-seller v2.0 agreement signing is not implemented. The existing public enrollment function still signs v1.0.
 - [ ] **Blocker:** Run the SQL migration in a disposable staging environment and execute the full staging test matrix; inspect the real schema for column compatibility.
