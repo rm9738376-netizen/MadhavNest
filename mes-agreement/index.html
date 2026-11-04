@@ -74,7 +74,8 @@ async function showSellerAddendum(){
    const res=await fetch(SUPABASE_URL+'/functions/v1/mes-addendum',{method:'POST',headers:{apikey:SUPABASE_KEY,authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},body:JSON.stringify({action:'accept_addendum',version:'2.0',accepted:true,termsSha256:reviewedTerms.sha256,signerName:document.getElementById('sellerSigner').value.trim()})});
    const result=await res.json().catch(()=>({}));
    if(!res.ok)throw Error(result.error||'Acceptance unavailable');
-   msg.textContent='Acceptance recorded. Awaiting MES approval; original 5% terms remain active until confirmed.';
+   if(result.archived!==true){msg.textContent='Acceptance recorded, but signed PDF archival is incomplete. Contact MES support. ₹10 commission is NOT active.';return}
+   msg.textContent='Acceptance and signed PDF archived. Awaiting MES approval; original 5% terms remain active until confirmed.';
   }catch(error){msg.textContent=error.message}
  };
 }
