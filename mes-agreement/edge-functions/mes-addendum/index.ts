@@ -43,7 +43,7 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
    if(!line)return ['']
    const result:string[]=[]
    let current=''
-   for(const word of line.split(/\\s+/)){
+   for(const word of line.split(/\s+/)){
     if(!word)continue
     const candidate=current?current+' '+word:word
     if(font.widthOfTextAtSize(candidate,9)<=maxWidth){current=candidate;continue}
@@ -62,7 +62,7 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
    'Seller email: '+user.email,'Signer: '+b.signerName.trim(),
    'Seller auth ID: '+user.id,'Accepted at (UTC): '+new Date(data.accepted_at).toISOString(),
    'Terms SHA-256: '+await hashTerms(),'',
-   ...ADDENDUM_V2.split('\\n')]
+   ...ADDENDUM_V2.split('\n')]
   const lines=rawLines.flatMap(wrap)
   let page=pdf.addPage([595,842]),y=800
   for(const line of lines){if(y<45){page=pdf.addPage([595,842]);y=800}page.drawText(line,{x:38,y,size:9,font});y-=15}
