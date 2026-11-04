@@ -34,8 +34,8 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
    'Seller email: '+user.email,'Signer: '+b.signerName.trim(),
    'Seller auth ID: '+user.id,'Accepted at (UTC): '+new Date().toISOString(),
    'Terms SHA-256: '+await hashTerms(),'',
-   ...ADDENDUM_V2.replace(/[^\\x20-\\x7E\\n]/g,'-').split('\\n').flatMap(line=>{
-    const words=line.split(/\\s+/),out=[];let current=''
+   ...ADDENDUM_V2.replace(/[^\x20-\x7E\n]/g,'-').split('\n').flatMap(line=>{
+    const words=line.split(/\s+/),out=[];let current=''
     for(const word of words){if((current+' '+word).length>95){out.push(current);current=word}else current+=(current?' ':'')+word}
     if(current)out.push(current);return out
    })]
