@@ -114,6 +114,11 @@ begin
  if v_charged and p_status in ('cancelled','rto') then raise exception 'Previously delivered order requires return/refund adjustment';end if;
  if v_order.status in ('returned','refunded') and p_status not in ('returned','refunded') then raise exception 'Cannot undo return without reviewed correction';end if;
  if v_charged and v_order.delivered_at is distinct from p_delivered_at then raise exception 'Delivery date locked after charging';end if;
+ -- Once a reversal is posted, its accounting date and terminal status are immutable.
+ -- Corrections must use a separately audited adjustment workflow.
+ if v_reversed and (v_order.returned_at is distinct from p_returned_at
+  or v_order.status is distinct from p_status)
+ then raise exception 'Reversed order evidence is locked; reviewed adjustment required';end if;
  if p_status in ('delivered','returned','refunded') then
   insert into public.order_commission_ledger(order_id,seller_id,event_type,amount,event_at,created_by)
   values(v_order.id,p_seller_id,'delivery_charge',10,p_delivered_at,p_actor) on conflict(order_id,event_type) do nothing;
