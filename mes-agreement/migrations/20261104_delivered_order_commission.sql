@@ -88,6 +88,10 @@ begin
  if p_status in ('returned','refunded') and p_returned_at is null then raise exception 'Return date required';end if;
  if p_delivered_at is not null and p_delivered_at < v_policy.effective_from then raise exception 'Delivery predates accepted policy';end if;
  if p_delivered_at > v_now or p_returned_at > v_now then raise exception 'Future event date invalid';end if;
+ if p_status in ('cancelled','rto') and (p_delivered_at is not null or p_returned_at is not null)
+ then raise exception 'Cancelled or RTO orders must not include delivery or return dates';end if;
+ if p_status='delivered' and p_returned_at is not null
+ then raise exception 'Delivered orders cannot include a return date';end if;
  if p_returned_at is not null and p_delivered_at is not null and p_returned_at < p_delivered_at then raise exception 'Return before delivery';end if;
  insert into public.seller_orders(seller_id,marketplace,marketplace_order_id,status,delivered_at,returned_at,notes,created_by)
  values(p_seller_id,p_marketplace,trim(p_order_id),p_status,p_delivered_at,p_returned_at,coalesce(p_notes,''),p_actor)
