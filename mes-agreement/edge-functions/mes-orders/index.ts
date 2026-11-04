@@ -25,10 +25,28 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  if(req.method!=='POST')return reply({error:'Method not allowed'},405)
  const b=await req.json().catch(()=>null)
  if(!b||!['Flipkart','Meesho'].includes(b.marketplace)||!['delivered','returned','refunded','cancelled','rto'].includes(b.status)||typeof b.orderId!=='string'||!b.orderId.trim()||!b.sellerId)return reply({error:'Invalid order details'},400)
- if(['delivered','returned','refunded'].includes(b.status)){
- const {data:terms,error:termError}=await db.from('seller_commission_terms').select('id,effective_from,accepted_at,model,rate').eq('seller_id',b.sellerId).eq('model','delivered_order_flat').not('accepted_at','is',null).lte('effective_from',new Date().toISOString()).order('effective_from',{ascending:false}).limit(1)
- if(termError)return reply({error:termError.message},500)
- if(!terms?.length)return reply({error:'Seller has not accepted the ₹10 agreement; old agreement remains active'},409)
+ // Validate event timestamps before attempting the privileged database RPC.
+ const hasDelivery=['delivered','returned','refunded'].includes(b.status)
+ const hasReturn=['returned','refunded'].includes(b.status)
+ const validDate=(v:any)=>typeof v==='string' && Number.isFinite(Date.parse(v)) && /(?:Z|[+-]\\d{2}:\\d{2})$/.test(v)
+ if(hasDelivery&&!validDate(b.deliveredAt))return reply({error:'Valid offset-aware delivery timestamp required'},400)
+ if(hasReturn&&!validDate(b.returnedAt))return reply({error:'Valid offset-aware return timestamp required'},400)
+ if(!hasReturn&&b.returnedAt)return reply({error:'Return timestamp not allowed for this status'},400)
+ if(!hasDelivery&&(b.deliveredAt||b.returnedAt))return reply({error:'Undelivered orders cannot include event timestamps'},400)
+ if(hasDelivery){
+  const {data:terms,error:termError}=await db.from('seller_commission_terms')
+   .select('id,effective_from,addendum_reference')
+   .eq('seller_id',b.sellerId).eq('model','delivered_order_flat')
+   .not('accepted_at','is',null).lte('effective_from',b.deliveredAt)
+   .order('effective_from',{ascending:false}).limit(1)
+  if(termError)return reply({error:'Commission policy lookup unavailable'},500)
+  if(!terms?.length)return reply({error:'No approved ₹10 policy effective on delivery date; existing agreement remains applicable'},409)
+  const {data:addendum,error:addendumError}=await db.from('seller_agreement_addenda')
+   .select('id,mes_approved_at,pdf_key,pdf_hash')
+   .eq('id',terms[0].addendum_reference).eq('seller_id',b.sellerId).maybeSingle()
+  if(addendumError)return reply({error:'Agreement approval lookup unavailable'},500)
+  if(!addendum?.mes_approved_at||!addendum.pdf_key||!/^[0-9a-f]{64}$/.test(addendum.pdf_hash||''))
+   return reply({error:'Approved archived seller addendum required before ₹10 posting'},409)
  }
  if(!['delivered','returned','refunded','cancelled','rto'].includes(b.status))return reply({error:'Invalid status'},400)
  const {data,error}=await db.rpc('mes_record_order',{
