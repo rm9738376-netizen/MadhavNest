@@ -181,3 +181,32 @@ begin
 end $$;
 revoke all on function public.mes_approve_addendum(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.mes_approve_addendum(uuid,uuid) to service_role;
+
+-- Private archive: service-role-only access; do not expose public signed documents.
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+values('mes-signed-addenda','mes-signed-addenda',false,1048576,array['application/pdf'])
+on conflict(id) do nothing;
+
+-- Immutable signed document reference: archive evidence may be set once.
+create or replace function public.mes_archive_addendum(
+ p_addendum_id uuid,p_actor uuid,p_pdf_key text,p_pdf_hash text
+) returns jsonb language plpgsql security definer set search_path=public as $$
+declare v_addendum public.seller_agreement_addenda%rowtype;
+begin
+ select * into v_addendum from public.seller_agreement_addenda
+ where id=p_addendum_id for update;
+ if not found or v_addendum.seller_auth_user_id is distinct from p_actor
+ then raise exception 'Addendum not found for authenticated seller';end if;
+ if v_addendum.accepted_at is null or v_addendum.mes_approved_at is not null
+ then raise exception 'Addendum not eligible for archival';end if;
+ if v_addendum.pdf_key is not null or v_addendum.pdf_hash is not null
+ then raise exception 'Signed document already archived';end if;
+ if p_pdf_key <> ('addenda/'||p_addendum_id::text||'.pdf')
+ or p_pdf_hash !~ '^[0-9a-f]{64}$'
+ then raise exception 'Invalid signed document reference';end if;
+ update public.seller_agreement_addenda
+ set pdf_key=p_pdf_key,pdf_hash=p_pdf_hash where id=p_addendum_id;
+ return jsonb_build_object('addendum_id',p_addendum_id,'archived',true);
+end $$;
+revoke all on function public.mes_archive_addendum(uuid,uuid,text,text) from public,anon,authenticated;
+grant execute on function public.mes_archive_addendum(uuid,uuid,text,text) to service_role;
