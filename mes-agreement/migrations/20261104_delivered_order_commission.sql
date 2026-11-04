@@ -137,6 +137,19 @@ end $$;
 revoke all on function public.mes_record_order(uuid,text,text,text,timestamptz,timestamptz,uuid,text) from public,anon,authenticated;
 grant execute on function public.mes_record_order(uuid,text,text,text,timestamptz,timestamptz,uuid,text) to service_role;
 
+-- Accounting entries are append-only: a correction must be a separately audited
+-- adjustment, never a silent UPDATE or DELETE of original charges/reversals.
+create or replace function public.mes_block_ledger_mutation()
+returns trigger language plpgsql security invoker set search_path=public as $
+begin
+ raise exception 'Commission ledger is append-only; use an audited adjustment workflow';
+end $;
+drop trigger if exists mes_commission_ledger_immutable on public.order_commission_ledger;
+create trigger mes_commission_ledger_immutable
+ before update or delete on public.order_commission_ledger
+ for each row execute function public.mes_block_ledger_mutation();
+revoke all on function public.mes_block_ledger_mutation() from public,anon,authenticated;
+
 -- Seller identity is checked again inside the transaction. No browser-supplied seller ID.
 -- Signing an addendum alone does not activate new billing: MES must countersign.
 alter table public.seller_agreement_addenda
