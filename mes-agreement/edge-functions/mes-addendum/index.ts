@@ -28,6 +28,7 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  if(b.termsSha256!==await hashTerms())return respond({error:'Agreement text changed; review again before signing'},409)
  const {data,error}=await ctx.supabaseAdmin.rpc('mes_accept_addendum',{p_actor:user.id,p_terms:ADDENDUM_V2,p_signer:b.signerName.trim()})
  if(error)return respond({error:error.message},409)
+ if(!data?.accepted_at||!Number.isFinite(Date.parse(data.accepted_at)))return respond({error:'Acceptance timestamp unavailable; PDF archival requires database evidence',addendum:data,archived:false},202)
  if(data?.archived===true)return respond({addendum:data,version:'2.0',archived:true,message:'Signed addendum already archived; awaiting or completed MES approval.'})
  // Snapshot the exact server-owned terms and authenticated acceptance evidence.
  // The PDF is not countersigned by MES; approval is a separate action.
@@ -59,7 +60,7 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
   }
   const rawLines=['MADHAV ECOM SOLUTION - COMMISSION ADDENDUM v2.0',
    'Seller email: '+user.email,'Signer: '+b.signerName.trim(),
-   'Seller auth ID: '+user.id,'Accepted at (UTC): '+new Date().toISOString(),
+   'Seller auth ID: '+user.id,'Accepted at (UTC): '+new Date(data.accepted_at).toISOString(),
    'Terms SHA-256: '+await hashTerms(),'',
    ...ADDENDUM_V2.split('\\n')]
   const lines=rawLines.flatMap(wrap)
