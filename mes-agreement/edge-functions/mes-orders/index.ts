@@ -28,7 +28,7 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  // Validate event timestamps before attempting the privileged database RPC.
  const hasDelivery=['delivered','returned','refunded'].includes(b.status)
  const hasReturn=['returned','refunded'].includes(b.status)
- const validDate=(v:any)=>typeof v==='string' && Number.isFinite(Date.parse(v)) && /(?:Z|[+-]\\d{2}:\\d{2})$/.test(v)
+ const validDate=(v:any)=>typeof v==='string' && Number.isFinite(Date.parse(v)) && /(?:Z|[+-]\d{2}:\d{2})$/.test(v)
  if(hasDelivery&&!validDate(b.deliveredAt))return reply({error:'Valid offset-aware delivery timestamp required'},400)
  if(hasReturn&&!validDate(b.returnedAt))return reply({error:'Valid offset-aware return timestamp required'},400)
  if(!hasReturn&&b.returnedAt)return reply({error:'Return timestamp not allowed for this status'},400)
