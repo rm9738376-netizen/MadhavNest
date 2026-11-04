@@ -146,7 +146,19 @@ begin
  then raise exception 'Valid signatory and terms required';end if;
  select * into v_existing from public.seller_agreement_addenda
  where original_agreement_id=v_agreement and version='2.0' for update;
- if found then raise exception 'Addendum already exists; contact support';end if;
+ if found then
+  -- Safe archival retry: only the original verified signer with identical terms
+  -- can resume; a signed or approved addendum cannot be replaced or altered.
+  if v_existing.seller_auth_user_id is distinct from p_actor
+   or v_existing.terms_text is distinct from p_terms
+   or v_existing.accepted_name is distinct from trim(p_signer)
+  then raise exception 'Existing addendum details differ; contact support';end if;
+  return jsonb_build_object('addendum_id',v_existing.id,
+   'status',case when v_existing.mes_approved_at is not null then 'active'
+    when v_existing.pdf_key is not null then 'awaiting_mes_approval'
+    else 'awaiting_pdf_archive' end,
+   'archived',v_existing.pdf_key is not null);
+ end if;
  insert into public.seller_agreement_addenda
  (seller_id,original_agreement_id,version,terms_text,accepted_at,accepted_name,seller_auth_user_id)
  values(v_seller,v_agreement,'2.0',p_terms,now(),trim(p_signer),p_actor)
