@@ -60,6 +60,14 @@ alter table public.order_commission_ledger enable row level security;
 alter table public.seller_agreement_addenda enable row level security;
 -- No client RLS policies: only privileged, server-side admin functions may write.
 
+-- Prevent unsigned/forged acceptance from activating a billing policy.
+-- A privileged backend must verify seller identity and sign the addendum first.
+create unique index if not exists one_commission_term_per_effective_date
+ on public.seller_commission_terms(seller_id,effective_from);
+create unique index if not exists one_addendum_per_original_version
+ on public.seller_agreement_addenda(original_agreement_id,version);
+alter table public.seller_agreement_addenda add constraint signed_addendum_complete
+ check ((accepted_at is null and accepted_name is null) or (accepted_at is not null and nullif(trim(accepted_name),'') is not null));
 -- Transactional manual-order posting; callable only by service_role.
 -- The admin Edge Function must verify admin_users before invoking this RPC.
 create or replace function public.mes_record_order(
