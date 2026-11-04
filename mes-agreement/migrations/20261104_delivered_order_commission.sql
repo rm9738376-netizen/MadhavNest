@@ -112,3 +112,35 @@ begin
 end $$;
 revoke all on function public.mes_record_order(uuid,text,text,text,timestamptz,timestamptz,uuid,text) from public,anon,authenticated;
 grant execute on function public.mes_record_order(uuid,text,text,text,timestamptz,timestamptz,uuid,text) to service_role;
+
+-- Seller identity is checked again inside the transaction. No browser-supplied seller ID.
+-- Signing an addendum alone does not activate new billing: MES must countersign.
+alter table public.seller_agreement_addenda
+ add column if not exists seller_auth_user_id uuid references auth.users(id),
+ add column if not exists mes_approved_at timestamptz,
+ add column if not exists mes_approved_by uuid references auth.users(id);
+create or replace function public.mes_accept_addendum(p_actor uuid,p_terms text,p_signer text)
+returns jsonb language plpgsql security definer set search_path=public,auth as $$
+declare v_email text;v_seller uuid;v_agreement uuid;v_id uuid;v_existing public.seller_agreement_addenda%rowtype;
+begin
+ select lower(email) into v_email from auth.users
+ where id=p_actor and email_confirmed_at is not null;
+ if v_email is null then raise exception 'Verified email sign-in required';end if;
+ select id into v_seller from public.seller_users where lower(email)=v_email;
+ if v_seller is null then raise exception 'No seller registered with verified email';end if;
+ select id into v_agreement from public.seller_agreements
+ where seller_id=v_seller and terms_status='signed';
+ if v_agreement is null then raise exception 'Signed original agreement required';end if;
+ if nullif(trim(p_signer),'') is null or length(p_signer)>200 or length(p_terms)<100
+ then raise exception 'Valid signatory and terms required';end if;
+ select * into v_existing from public.seller_agreement_addenda
+ where original_agreement_id=v_agreement and version='2.0' for update;
+ if found then raise exception 'Addendum already exists; contact support';end if;
+ insert into public.seller_agreement_addenda
+ (seller_id,original_agreement_id,version,terms_text,accepted_at,accepted_name,seller_auth_user_id)
+ values(v_seller,v_agreement,'2.0',p_terms,now(),trim(p_signer),p_actor)
+ returning id into v_id;
+ return jsonb_build_object('addendum_id',v_id,'status','awaiting_mes_approval');
+end $$;
+revoke all on function public.mes_accept_addendum(uuid,text,text) from public,anon,authenticated;
+grant execute on function public.mes_accept_addendum(uuid,text,text) to service_role;
