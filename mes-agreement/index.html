@@ -168,9 +168,31 @@ async function showAddendumApprovals(){
    const row=document.createElement('div');row.className='notice';
    const info=document.createElement('p');info.textContent='Seller '+a.seller_id+' | '+(a.mes_approved_at?'Approved':a.accepted_at?'Accepted, pending MES':'Pending seller')+' | '+(a.pdf_key?'PDF archived':'PDF missing');
    row.appendChild(info);
+   let verifiedPdf=false
+   if(a.pdf_key&&a.pdf_hash){
+    const view=document.createElement('button');view.className='btn outline';view.textContent='Download verified signed PDF'
+    view.onclick=async()=>{
+     view.disabled=true
+     try{
+      const {data:{session}}=await supabase.auth.getSession()
+      if(!session)throw Error('Admin login required')
+      const response=await fetch(SUPABASE_URL+'/functions/v1/mes-addendum-admin',{
+       method:'POST',headers:{apikey:SUPABASE_KEY,authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},
+       body:JSON.stringify({action:'view_pdf',addendumId:a.id})
+      })
+      if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.error||'PDF unavailable')}
+      const blob=await response.blob(),url=URL.createObjectURL(blob),link=document.createElement('a')
+      link.href=url;link.download='MES-Addendum-'+a.id+'.pdf';document.body.appendChild(link);link.click();link.remove()
+      setTimeout(()=>URL.revokeObjectURL(url),60000)
+      verifiedPdf=true
+      document.getElementById('approvalMsg').textContent='Verified PDF downloaded. Review its contents before approving. SHA-256: '+a.pdf_hash
+     }catch(e){document.getElementById('approvalMsg').textContent=e.message}finally{view.disabled=false}
+    }
+    row.appendChild(view)
+   }
    if(a.readyForApproval){
     const btn=document.createElement('button');btn.className='btn primary';btn.textContent='Approve';
-    btn.onclick=async()=>{if(!confirm('Have you verified the archived signed PDF and its hash?'))return;btn.disabled=true;try{await request('POST',{action:'approve',addendumId:a.id});btn.remove();document.getElementById('approvalMsg').textContent='Approved successfully.'}catch(e){document.getElementById('approvalMsg').textContent=e.message;btn.disabled=false}};
+    btn.onclick=async()=>{if(!verifiedPdf){document.getElementById('approvalMsg').textContent='Download and review the verified signed PDF first.';return}if(!confirm('Approve the reviewed signed addendum and activate ₹10 billing prospectively?'))return;btn.disabled=true;try{await request('POST',{action:'approve',addendumId:a.id});btn.remove();document.getElementById('approvalMsg').textContent='Approved successfully.'}catch(e){document.getElementById('approvalMsg').textContent=e.message;btn.disabled=false}};
     row.appendChild(btn);
    }
    root.appendChild(row);
