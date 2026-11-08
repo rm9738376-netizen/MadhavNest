@@ -1,4 +1,4 @@
-import { withSupabase } from 'npm:@supabase/server'
+import { withSupabase } from 'npm:@supabase/server@1.9.2'
 const headers={'Content-Type':'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'GET,POST,OPTIONS'}
 const reply=(data:any,status=200)=>Response.json(data,{status,headers})
 export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
@@ -18,13 +18,13 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  }
  if(req.method!=='POST')return reply({error:'Method not allowed'},405)
  const body=await req.json().catch(()=>null)
- if(body?.action!=='approve'||typeof body.addendumId!=='string')return reply({error:'Invalid request'},400)
+ if(!['approve','view_pdf'].includes(body?.action)||typeof body.addendumId!=='string')return reply({error:'Invalid request'},400)
  // Never approve a mere path/hash claim: verify the actual private PDF bytes.
  const {data:record,error:recordError}=await db.from('seller_agreement_addenda')
   .select('id,pdf_key,pdf_hash,accepted_at,mes_approved_at')
   .eq('id',body.addendumId).maybeSingle()
  if(recordError||!record)return reply({error:'Addendum not found'},404)
- if(!record.accepted_at||record.mes_approved_at||!record.pdf_key||!record.pdf_hash)
+ if(!record.accepted_at||(body.action==='approve'&&record.mes_approved_at)||!record.pdf_key||!record.pdf_hash)
   return reply({error:'Addendum not ready for approval'},409)
  if(record.pdf_key!=='addenda/'+record.id+'.pdf'||!/^[0-9a-f]{64}$/.test(record.pdf_hash))
   return reply({error:'Invalid archive reference'},409)
@@ -36,6 +36,12 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  const actual=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)))
   .map(x=>x.toString(16).padStart(2,'0')).join('')
  if(actual!==record.pdf_hash)return reply({error:'Archived PDF integrity mismatch'},409)
+ if(body.action==='view_pdf'){
+  return new Response(bytes,{headers:{
+   ...headers,'Content-Type':'application/pdf','Cache-Control':'no-store',
+   'Content-Disposition':'attachment; filename="MES-Addendum-'+record.id+'.pdf"'
+  }})
+ }
  const {data,error}=await db.rpc('mes_approve_addendum',{p_addendum_id:body.addendumId,p_admin_id:user.id})
  if(error)return reply({error:error.message},409)
  return reply({approval:data})
