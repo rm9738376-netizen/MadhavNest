@@ -1,0 +1,21 @@
+// Offline tests. Dependency: typescript@5.9.3
+import ts from 'typescript';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const src=readFileSync(new URL('../edge-functions/mes-addendum-admin/index.ts',import.meta.url),'utf8').replace(/^import .*\n/gm,'');
+const js=ts.transpileModule(src,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022},reportDiagnostics:true});assert.equal(js.diagnostics.length,0);
+const handler=(await import('data:text/javascript;base64,'+Buffer.from('const withSupabase=(_,fn)=>fn;\n'+js.outputText).toString('base64'))).default.fetch;
+const bytes=new TextEncoder().encode('%PDF-1.7\n'+'synthetic test content '.repeat(10));
+const hash=Buffer.from(await crypto.subtle.digest('SHA-256',bytes)).toString('hex');
+let admin=true,rpcCalls=0,corrupt=false;
+const record={id:'synthetic',pdf_key:'addenda/synthetic.pdf',pdf_hash:hash,accepted_at:'2026-01-01',mes_approved_at:'2026-01-02'};
+const db={auth:{getUser:async()=>({data:{user:{id:'admin'}},error:null})},from(table){return {select(){return this},eq(){return this},maybeSingle:async()=>({data:table==='admin_users'?(admin?{auth_user_id:'admin'}:null):record,error:null})}},storage:{from:()=>({download:async()=>({data:new Blob([corrupt?new Uint8Array(200):bytes]),error:null})})},rpc:async()=>{rpcCalls++;return {data:{status:'active'},error:null}}};
+const request=(action,token=true)=>new Request('https://test.invalid',{method:'POST',headers:{...(token?{authorization:'Bearer valid'}:{}),'Content-Type':'application/json'},body:JSON.stringify({action,addendumId:'synthetic'})});
+let r=await handler(request('view_pdf',false),{supabaseAdmin:db});assert.equal(r.status,401);console.log('PASS PDF requires authentication');
+admin=false;r=await handler(request('view_pdf'),{supabaseAdmin:db});assert.equal(r.status,403);console.log('PASS seller cannot retrieve admin PDFs');admin=true;
+r=await handler(request('view_pdf'),{supabaseAdmin:db});assert.equal(r.status,200);assert.equal(r.headers.get('content-type'),'application/pdf');assert.equal(r.headers.get('cache-control'),'no-store');assert.deepEqual(new Uint8Array(await r.arrayBuffer()),bytes);assert.equal(rpcCalls,0);console.log('PASS approved PDF retrievable with verified bytes and no approval mutation');
+corrupt=true;r=await handler(request('view_pdf'),{supabaseAdmin:db});assert.equal(r.status,409);assert.equal(rpcCalls,0);console.log('PASS corrupt archive rejected');corrupt=false;
+r=await handler(request('approve'),{supabaseAdmin:db});assert.equal(r.status,409);assert.equal(rpcCalls,0);console.log('PASS already approved addendum cannot reactivate');
+const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
+const code=html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
+const sf=ts.createSourceFile('ui.js',code,ts.ScriptTarget.ES2022,true,ts.ScriptKind.JS);assert.equal(sf.parseDiagnostics.length,0);console.log('PASS frontend JavaScript parses');
