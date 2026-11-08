@@ -1,5 +1,5 @@
 // Draft for staging. Requires deployed mes_accept_addendum RPC and configured email OTP.
-import { withSupabase } from 'npm:@supabase/server'
+import { withSupabase } from 'npm:@supabase/server@1.9.2'
 import { PDFDocument, StandardFonts } from 'npm:pdf-lib@1.17.1'
 const cors={'Content-Type':'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'GET,POST,OPTIONS'}
 const respond=(value:any,status=200)=>Response.json(value,{status,headers:cors})
@@ -34,6 +34,10 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
  // The PDF is not countersigned by MES; approval is a separate action.
  try{
   const pdf=await PDFDocument.create()
+  // Keep retries byte-identical to the original database-recorded acceptance.
+  const acceptedAt=new Date(data.accepted_at)
+  pdf.setCreationDate(acceptedAt)
+  pdf.setModificationDate(acceptedAt)
   const font=await pdf.embedFont(StandardFonts.Helvetica)
   if(!/^[\x20-\x7E\n]*$/.test(ADDENDUM_V2))throw Error('PDF font cannot encode canonical agreement text')
   // Wrap every field (including long email addresses and signer names) by actual
@@ -71,9 +75,23 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
   const sha=Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,'0')).join('')
   const path='addenda/'+data.addendum_id+'.pdf'
   const {error:uploadError}=await ctx.supabaseAdmin.storage.from('mes-signed-addenda').upload(path,bytes,{contentType:'application/pdf',upsert:false})
-  if(uploadError)throw uploadError
+  if(uploadError){
+   // A prior upload can succeed while the archive RPC fails. Never replace it:
+   // resume only when its bytes exactly match this acceptance's canonical PDF.
+   const {data:existing,error:downloadError}=await ctx.supabaseAdmin.storage.from('mes-signed-addenda').download(path)
+   if(downloadError||!existing)throw uploadError
+   const existingBytes=new Uint8Array(await existing.arrayBuffer())
+   if(existingBytes.length!==bytes.length||existingBytes.some((value,index)=>value!==bytes[index]))
+    throw Error('Existing signed document differs; manual review required')
+  }
   const {error:archiveError}=await ctx.supabaseAdmin.rpc('mes_archive_addendum',{p_addendum_id:data.addendum_id,p_actor:user.id,p_pdf_key:path,p_pdf_hash:sha})
-  if(archiveError)throw archiveError
+  if(archiveError){
+   // A concurrent identical retry, or a lost RPC response, may already archive it.
+   const {data:archived,error:lookupError}=await ctx.supabaseAdmin.from('seller_agreement_addenda')
+    .select('seller_auth_user_id,pdf_key,pdf_hash').eq('id',data.addendum_id).maybeSingle()
+   if(lookupError||archived?.seller_auth_user_id!==user.id||archived?.pdf_key!==path||archived?.pdf_hash!==sha)
+    throw archiveError
+  }
   return respond({addendum:data,version:'2.0',archived:true,message:'Acceptance and PDF archived; awaiting MES approval.'})
  }catch(archiveError){
   return respond({addendum:data,version:'2.0',archived:false,error:'Acceptance recorded, but PDF archival failed. Contact MES; billing remains inactive.'},202)
