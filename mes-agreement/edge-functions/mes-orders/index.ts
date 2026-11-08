@@ -1,6 +1,6 @@
 // Draft only. Deploy after schema migration, agreement acceptance flow and staging tests.
 // Admin-only manual order entry. No public table policies.
-import { withSupabase } from 'npm:@supabase/server'
+import { withSupabase } from 'npm:@supabase/server@1.9.2'
 const cors={'Content-Type':'application/json','Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'GET,POST,OPTIONS'}
 const reply=(data:any,status=200)=>Response.json(data,{status,headers:cors})
 export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
@@ -18,8 +18,20 @@ export default {fetch:withSupabase({auth:'none'},async(req,ctx)=>{
   if(!sellerId)return reply({error:'sellerId required'},400)
   const {data:orders,error}=await db.from('seller_orders').select('id,marketplace,marketplace_order_id,status,delivered_at,returned_at,created_at').eq('seller_id',sellerId).order('created_at',{ascending:false}).limit(500)
   if(error)return reply({error:error.message},500)
-  const {data:ledger,error:ledgerError}=await db.from('order_commission_ledger').select('amount,event_type,order_id,event_at').eq('seller_id',sellerId)
-  if(ledgerError)return reply({error:ledgerError.message},500)
+  // Read every ledger page: the Data API otherwise truncates large sellers' totals.
+  // A stable order prevents entries from changing pages between requests.
+  const ledger:any[]=[]
+  const pageSize=500
+  for(let offset=0;;offset+=pageSize){
+   const {data:page,error:ledgerError}=await db.from('order_commission_ledger')
+    .select('amount,event_type,order_id,event_at').eq('seller_id',sellerId)
+    .order('created_at',{ascending:true}).order('id',{ascending:true})
+    .range(offset,offset+pageSize-1)
+   if(ledgerError)return reply({error:'Commission ledger unavailable'},500)
+   if(!page)return reply({error:'Commission ledger unavailable'},500)
+   ledger.push(...page)
+   if(page.length<pageSize)break
+  }
   return reply({orders,ledger,netCommission:(ledger||[]).reduce((s:number,x:any)=>s+Number(x.amount),0)})
  }
  if(req.method!=='POST')return reply({error:'Method not allowed'},405)
