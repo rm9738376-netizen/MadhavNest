@@ -38,26 +38,45 @@ async function showSellerAddendum(){
  modal.classList.add('show');
  box.innerHTML='<h2>Existing Seller — Commission Addendum</h2><p class="muted">Your original 12-month agreement remains unchanged. The new ₹10-per-delivered-order model will only start after verified acceptance and MES approval. Existing 5% liabilities remain payable.</p><div class="notice">This workflow is under development. Do not treat an OTP or submission as an executed addendum until MES confirms activation.</div><form id="sellerOtpRequest"><div class="field"><label>Registered email</label><input id="sellerEmail" type="email" autocomplete="email" required></div><button class="btn primary">Send email OTP</button></form><form id="sellerOtpVerify" style="display:none"><div class="field"><label>One-time code</label><input id="sellerOtp" inputmode="numeric" autocomplete="one-time-code" required></div><button class="btn primary">Verify email</button></form><form id="sellerAcceptForm" style="display:none"><div class="field"><label>Authorized signatory</label><input id="sellerSigner" required maxlength="200"></div><label><input type="checkbox" id="sellerAccept" required> I have reviewed and explicitly accept Commission Addendum v2.0, subject to MES approval.</label><div class="actions"><button class="btn primary">Submit acceptance</button></div></form><div id="sellerAddendumMsg" role="status" aria-live="polite"></div>';
  const msg=document.getElementById('sellerAddendumMsg');
- let verified=false, reviewedTerms=null;
+ let verified=false, reviewedTerms=null, verifiedIdentity=null, verificationVersion=0;
+ const invalidateVerification=()=>{
+  verificationVersion++;verified=false;reviewedTerms=null;verifiedIdentity=null;
+  document.getElementById('sellerAccept').checked=false;
+  document.getElementById('sellerAcceptForm').style.display='none';
+  document.getElementById('sellerAcceptForm').querySelector('.agreement')?.remove();
+ };
+ document.getElementById('sellerEmail').addEventListener('input',()=>{
+  invalidateVerification();
+  document.getElementById('sellerOtpVerify').style.display='none';
+  document.getElementById('sellerOtp').value='';
+  msg.textContent='Email changed. Request and verify a new OTP.';
+ });
  document.getElementById('sellerOtpRequest').onsubmit=async e=>{
-  e.preventDefault();const email=document.getElementById('sellerEmail').value.trim().toLowerCase();
+  e.preventDefault();invalidateVerification();
+  const email=document.getElementById('sellerEmail').value.trim().toLowerCase();
+  const attempt=verificationVersion;
   msg.textContent='Requesting OTP…';
   const {error}=await supabase.auth.signInWithOtp({email,options:{shouldCreateUser:false}});
+  if(attempt!==verificationVersion)return;
   if(error){msg.textContent=error.message;return}
   msg.textContent='If this email has an eligible account, check your inbox for a code.';
   document.getElementById('sellerOtpVerify').style.display='block';
  };
  document.getElementById('sellerOtpVerify').onsubmit=async e=>{
-  e.preventDefault();
+  e.preventDefault();invalidateVerification();
+  const attempt=verificationVersion;
   const email=document.getElementById('sellerEmail').value.trim().toLowerCase();
   const token=document.getElementById('sellerOtp').value.trim();
   const {data,error}=await supabase.auth.verifyOtp({email,token,type:'email'});
-  if(error||!data?.session){msg.textContent=error?.message||'Verification failed';return}
+  if(attempt!==verificationVersion)return;
+  if(error||!data?.session||data.user?.email?.toLowerCase()!==email){msg.textContent=error?.message||'Verification failed';return}
+  verifiedIdentity={id:data.user.id,email};
   verified=true;msg.textContent='Email verified. Loading complete addendum…';
   try{
    const response=await fetch(SUPABASE_URL+'/functions/v1/mes-addendum',{headers:{apikey:SUPABASE_KEY}});
    const terms=await response.json();
    if(!response.ok||!terms.terms||!terms.sha256)throw Error(terms.error||'Terms unavailable');
+   if(attempt!==verificationVersion)return;
    reviewedTerms=terms;
    const panel=document.createElement('div');panel.className='agreement';panel.style.whiteSpace='pre-wrap';panel.style.maxHeight='320px';panel.style.overflowY='auto';panel.textContent=terms.terms;
    document.getElementById('sellerAcceptForm').prepend(panel);
@@ -68,7 +87,13 @@ async function showSellerAddendum(){
  document.getElementById('sellerAcceptForm').onsubmit=async e=>{
   e.preventDefault();if(!verified||!reviewedTerms||!document.getElementById('sellerAccept').checked)return;
   const {data:{session}}=await supabase.auth.getSession();
-  if(!session){msg.textContent='Session expired. Verify again.';return}
+  if(!session){invalidateVerification();msg.textContent='Session expired. Verify again.';return}
+  const {data:{user:currentUser},error:identityError}=await supabase.auth.getUser(session.access_token);
+  if(identityError||!currentUser||currentUser.id!==verifiedIdentity?.id||
+   currentUser.email?.toLowerCase()!==verifiedIdentity?.email||
+   document.getElementById('sellerEmail').value.trim().toLowerCase()!==verifiedIdentity?.email){
+   invalidateVerification();msg.textContent='Signed-in identity changed. Verify your seller email again.';return
+  }
   msg.textContent='Submitting acceptance…';
   try{
    const res=await fetch(SUPABASE_URL+'/functions/v1/mes-addendum',{method:'POST',headers:{apikey:SUPABASE_KEY,authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},body:JSON.stringify({action:'accept_addendum',version:'2.0',accepted:true,termsSha256:reviewedTerms.sha256,signerName:document.getElementById('sellerSigner').value.trim()})});
@@ -212,7 +237,7 @@ async function orderApi(method,sellerId,body){
 }
 async function manageSellerOrders(r){
  const b=document.getElementById('modalbox');
- b.innerHTML='<h2>Manual Orders — '+esc(r.legalName)+'</h2><p class="muted">₹10 applies only after the seller accepts the new commission agreement. Full returns reverse ₹10; partial returns are not entered as full returns.</p><div id="orderMessage">Loading orders…</div><div id="orderSummary"></div><div class="row"><div class="field"><label>Marketplace</label><select id="oMarket"><option>Flipkart</option><option>Meesho</option></select></div><div class="field"><label>Marketplace Order ID</label><input id="oId" required></div><div class="field"><label>Status</label><select id="oStatus"><option value="delivered">Delivered</option><option value="returned">Fully Returned</option><option value="refunded">Fully Refunded</option><option value="cancelled">Cancelled</option><option value="rto">RTO</option></select></div><div class="field"><label>Delivered Date</label><input id="oDelivered" type="date"></div><div class="field"><label>Full Return/Refund Date</label><input id="oReturned" type="date"></div><div class="field full"><label>Notes</label><textarea id="oNotes" rows="2"></textarea></div></div><div class="actions"><button class="btn outline" id="orderBack">Back to Seller</button><button class="btn primary" id="orderSave">Save Order</button></div><div id="orderRows"></div>';
+ b.innerHTML='<h2>Manual Orders — '+esc(r.legalName)+'</h2><p class="muted">₹10 applies only after the seller accepts the new commission agreement. Full returns reverse ₹10; partial returns are not entered as full returns.</p><div id="orderMessage">Loading orders…</div><div id="orderSummary"></div><div class="row"><div class="field"><label>Marketplace</label><select id="oMarket"><option>Flipkart</option><option>Meesho</option></select></div><div class="field"><label>Marketplace Order ID</label><input id="oId" required></div><div class="field"><label>Status</label><select id="oStatus"><option value="delivered">Delivered</option><option value="returned">Fully Returned</option><option value="refunded">Fully Refunded</option><option value="cancelled">Cancelled</option><option value="rto">RTO</option></select></div><div class="field"><label>Delivered date and time (your local time)</label><input id="oDelivered" type="datetime-local" step="1"></div><div class="field"><label>Full return/refund date and time (your local time)</label><input id="oReturned" type="datetime-local" step="1"></div><div class="field full"><label>Notes</label><textarea id="oNotes" rows="2"></textarea></div></div><div class="actions"><button class="btn outline" id="orderBack">Back to Seller</button><button class="btn primary" id="orderSave">Save Order</button></div><div id="orderRows"></div>';
  document.getElementById('orderBack').onclick=()=>editSeller(r);
  const refresh=async()=>{
   try{
@@ -228,7 +253,7 @@ async function manageSellerOrders(r){
    const status=v('oStatus'),delivered=v('oDelivered'),returned=v('oReturned');
    if(['delivered','returned','refunded'].includes(status)&&!delivered)throw Error('Delivery date required');
    if(['returned','refunded'].includes(status)&&!returned)throw Error('Full return/refund date required');
-   const payload={sellerId:r.sellerId,marketplace:v('oMarket'),orderId:v('oId').trim(),status,deliveredAt:delivered?new Date(delivered+'T12:00:00').toISOString():null,returnedAt:returned?new Date(returned+'T12:00:00').toISOString():null,notes:v('oNotes')};
+   const payload={sellerId:r.sellerId,marketplace:v('oMarket'),orderId:v('oId').trim(),status,deliveredAt:delivered?new Date(delivered).toISOString():null,returnedAt:returned?new Date(returned).toISOString():null,notes:v('oNotes')};
    if(!payload.orderId)throw Error('Order ID required');
    await orderApi('POST',r.sellerId,payload);
    document.getElementById('orderMessage').textContent='Order saved.';
